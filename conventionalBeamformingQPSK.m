@@ -16,18 +16,18 @@ Pars.c = physconst('Lightspeed'); % speed of light
 
 Pars.lambda = Pars.c/Pars.fc; % wavelength (derived from above parameters)
 
-Pars.BSsize = 6; % Size of the linear antenna array
+Pars.BSsize = 4; % Size of the linear antenna array
 Pars.BSspacing = 1/2; % Spacing between antennas in terms of wavelengths
 
-Pars.SNR = 1000; % Signal to Noise ratio of all the signals expressed in [dB]
+Pars.SNR = 10; % Signal to Noise ratio of all the signals expressed in [dB]
 
-Pars.nbBits = 4; % Number of bits transmitted by each vehicle (must be multiple of 2)
+Pars.nbBits = 4096; % Number of bits transmitted by each vehicle (must be multiple of 2)
 
 % Define geometry of the problem (xyz coordinates)
 Geometry.BSPos=[0,0,100];    % Position of macrocell BS
-Geometry.V1Pos=[25,-25,0];   % Position for Vehicle 1
-Geometry.V2Pos=[-70,80,0];   % Position for Vehicle 2
-Geometry.V3Pos=[0,50,-10];    % Position for Vehicle 3
+Geometry.V1Pos=[25,-25,10];   % Position for Vehicle 1
+Geometry.V2Pos=[-20,40,0];   % Position for Vehicle 2
+Geometry.V3Pos=[0,0,0];    % Position for Vehicle 3
 
 % Define the antenna array
 Geometry.BSArray = phased.ULA('NumElements',Pars.BSsize,'ElementSpacing',Pars.lambda*Pars.BSspacing, 'ArrayAxis','x');
@@ -46,21 +46,22 @@ nbAntennas = Geometry.BSArray.NumElements; % nb. of antennas at BS
 input_seqs = randi([0 1], Pars.nbBits, nbVehicles);
 
 % Variable preallocation
-sent_signals = zeros(ceil(Pars.nbBits/2), nbVehicles);
+sent_signals = zeros(Pars.nbBits/2, nbVehicles);
 los_attenuations = zeros(nbVehicles);
-attenuated_signals = zeros(ceil(Pars.nbBits/2), nbVehicles);
-attenuated_signals_with_awgn = zeros(ceil(Pars.nbBits/2), nbVehicles);
+attenuated_signals = zeros(Pars.nbBits/2, nbVehicles);
+attenuated_signals_with_awgn = zeros(Pars.nbBits/2, nbVehicles);
 steering_vectors = zeros(nbAntennas, nbVehicles);
 weights = zeros(nbAntennas, nbVehicles);
+DoAs = zeros(nbVehicles, 2);
 
 for vehicleIndex = 1:1:nbVehicles
+
     % Generate the QPSK signal
-    
     sent_signals(:,vehicleIndex) = qpskmod(input_seqs(:, vehicleIndex));
     
     % LoS attenuation
-    startPositionField = strcat('V', num2str(vehicleIndex), 'Pos');
-    distanceToBS = DistanceBetweenTwoPoints(Geometry.BSPos, Geometry.(startPositionField));
+    PositionField = strcat('V', num2str(vehicleIndex), 'Pos');
+    distanceToBS = DistanceBetweenTwoPoints(Geometry.BSPos, Geometry.(PositionField));
     
     los_attenuations(vehicleIndex) = sqrt(2)*Pars.lambda/(4*pi*distanceToBS);
     attenuated_signals(:,vehicleIndex) = los_attenuations(vehicleIndex).*sent_signals(:,vehicleIndex);
@@ -68,8 +69,11 @@ for vehicleIndex = 1:1:nbVehicles
     % Add AWGN noise according to the provided SNR
     attenuated_signals_with_awgn(:,vehicleIndex) = awgn(attenuated_signals(:,vehicleIndex), Pars.SNR, 'measured');
     
+    % Compute the DoA
+    [DoAs(vehicleIndex, 1), DoAs(vehicleIndex, 2)]  = computeDoA(Pars, Geometry, vehicleIndex);
+
     % Compute the steering vector
-    steering_vectors(:,vehicleIndex) = getSteeringVector(Pars, Geometry, vehicleIndex);
+    steering_vectors(:,vehicleIndex) = steervec(Geometry.BSAntennaPos(1,:)/Pars.lambda, DoAs(vehicleIndex, :).');
     
     % Compute conventional beamforming weights (w = 1/N * s)
     weights(:, vehicleIndex) = (1/nbAntennas).*steering_vectors(:,vehicleIndex);
@@ -108,7 +112,6 @@ for vehicleIndex = 1:1:nbVehicles
     ylim([-1 1]);
     xline(0);
     yline(0);
-    
     
     % rcv by antenna 1 on subplot 2
     y1 = signals_received(:,1)/steering_vectors(1,vehicleIndex);
@@ -152,8 +155,6 @@ for vehicleIndex = 1:1:nbVehicles
             disp(strcat(int2str(interferer), '       | ', num2str(norm(weights(:,vehicleIndex)'*steering_vectors(:,interferer)))));
     end
     
-
-    
 end
 
 %% Functions 
@@ -163,18 +164,14 @@ function distance = DistanceBetweenTwoPoints(point1, point2)
     distance = norm(point1-point2);
 end
 
-% steering_vector funct
-% Compute and returns the steering vector, given Pars and Geometry structs
-% and the index of the vehicle.
-% The phases are calculated starting from the transmitter.
-function steering_vector = getSteeringVector(Pars, Geometry, vehicleIndex)
-    startPositionField = strcat('V', num2str(vehicleIndex), 'Pos');
-    nbAntennas = Geometry.BSArray.NumElements;
-    steering_vector = zeros(nbAntennas,1);
-    for antenna_index = 1:1:nbAntennas
-        prop_delay = DistanceBetweenTwoPoints(Geometry.(startPositionField), Geometry.BSPos'+Geometry.BSAntennaPos(:,antenna_index)) / Pars.c;
-        steering_vector(antenna_index,1) = exp(-1i*2*pi*Pars.fc*prop_delay);
-    end
+% Compute DoA
+% Compute and return the direction of arrival of Vehicle <vehicleIndex>,
+% given Pars and Geometry structs and the index of the vehicle.
+function [AoA, ZoA] = computeDoA(Pars, Geometry, vehicleIndex)
+    positionField = strcat('V', num2str(vehicleIndex), 'Pos');
+    distance = DistanceBetweenTwoPoints(Geometry.(positionField), Geometry.BSPos'+Geometry.BSPos);
+    AoA = atan2(Geometry.BSPos(1,2) - Geometry.(positionField)(1,2), Geometry.BSPos(1,1) - Geometry.(positionField)(1,1))*180/pi;
+    ZoA = atan2(distance, Geometry.BSPos(1,3) - Geometry.(positionField)(1,3))*180/pi;
 end
 
 % VisualizeScenario funct
@@ -186,7 +183,7 @@ function nbVehicles = VisualizeScenario(Geometry)
     subplot(2,1,1);
 
     % Base Station
-    plot3(Geometry.BSPos(1),Geometry.BSPos(2), Geometry.BSPos(3), '^b', 'DisplayName','BS')
+    plot3(Geometry.BSPos(1),Geometry.BSPos(2), Geometry.BSPos(3), '^b', 'DisplayName',strcat('BS (',num2str(Geometry.BSPos(1,1)), ',', num2str(Geometry.BSPos(1,2)), ',', num2str(Geometry.BSPos(1,3)), ')' ))
     text(Geometry.BSPos(1),Geometry.BSPos(2), Geometry.BSPos(3), 'BS', 'HorizontalAlignment', 'center', 'VerticalAlignment', 'top')
     
     grid on
@@ -195,10 +192,10 @@ function nbVehicles = VisualizeScenario(Geometry)
     % Vehicles
     vehicleIndex = 1;
     while (isfield(Geometry, strcat('V', num2str(vehicleIndex), 'Pos')))
-        % Start Position
-        startPositionField = strcat('V', num2str(vehicleIndex), 'Pos');
-        plot3(Geometry.(startPositionField)(1),Geometry.(startPositionField)(2), Geometry.(startPositionField)(3), 'v', 'DisplayName',strcat('Vehicle', num2str(vehicleIndex)))
-        text(Geometry.(startPositionField)(1),Geometry.(startPositionField)(2), Geometry.(startPositionField)(3), strcat('V', num2str(vehicleIndex), 'start'), 'HorizontalAlignment', 'center', 'VerticalAlignment', 'top')
+        % Position
+        PositionField = strcat('V', num2str(vehicleIndex), 'Pos');
+        plot3(Geometry.(PositionField)(1),Geometry.(PositionField)(2), Geometry.(PositionField)(3), 'v', 'DisplayName',strcat('Vehicle', num2str(vehicleIndex), ' (', num2str(Geometry.(PositionField)(1)), ',', num2str(Geometry.(PositionField)(2)), ',', num2str(Geometry.(PositionField)(3)), ')'))
+        text(Geometry.(PositionField)(1),Geometry.(PositionField)(2), Geometry.(PositionField)(3), strcat('V', num2str(vehicleIndex)), 'HorizontalAlignment', 'center', 'VerticalAlignment', 'top')
 
         % Update vehicle index
         vehicleIndex = vehicleIndex + 1;
