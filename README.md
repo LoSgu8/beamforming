@@ -1,5 +1,7 @@
 # Conventional Beamforming for Uplink Communication in 3D Wireless Networks
 This MATLAB script performs conventional beamforming using a linear antenna array in an uplink scenario with 3D geometry. It simulates a wireless communication system with multiple vehicles transmitting QPSK modulated narrowband signals to a base station. The script allows for easy modification of parameters and scenario geometry.
+![scenario plot](https://github.com/LoSgu8/beamforming/assets/17884896/25424a17-a309-42dc-b3c8-bbc9df216499)
+
 ## Scenario Description
 
 The script starts with a section where you can define the parameters and geometry of the scenario. Here are the parameters you can modify:
